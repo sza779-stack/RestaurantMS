@@ -1,0 +1,13 @@
+export { default as SettingsLayout } from './SettingsLayout';
+export { default as StockManagement } from './StockManagement';
+export { default as MenuManagement } from './menu/MenuManagement';
+export { default as DeliveryManagement } from './DeliveryManagement';
+export { default as AnalyticsReports } from './AnalyticsReports';
+export { default as StaffSuggestions } from './StaffSuggestions';
+export { default as HRManagement } from './HRManagement';
+export { default as CustomerManagement } from './CustomerManagement';
+export { default as GeneralSettings } from './GeneralSettings';
+export { default as DataManagement } from './DataManagement';
+export { default as GlobalInsights } from './GlobalInsights';
+export { default as UserManagement } from './UserManagement';
+export { default as SecuritySettings } from './SecuritySettings';

@@ -1,0 +1,139 @@
+/* Settings shell: light mode follows global design tokens; dark mode keeps the premium glass look. */
+
+html:not(.dark) .settings-theme {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+
+html.dark .settings-theme {
+  --st-bg: #020617;
+  --st-surface: rgba(15, 23, 42, 0.8);
+  --st-surface-2: rgba(17, 24, 39, 0.9);
+  --st-border: rgba(51, 65, 85, 0.5);
+  --st-text-1: #f8fafc;
+  --st-text-2: #e2e8f0;
+  --st-text-3: #cbd5e1;
+  --st-text-4: #94a3b8;
+  --st-text-5: #64748b;
+  --st-hover: rgba(30, 41, 59, 0.8);
+  --st-input: rgba(11, 18, 32, 0.9);
+  --st-primary: #6366f1;
+  --st-primary-hover: #4f46e5;
+  --st-glass: blur(12px) saturate(180%);
+
+  background: radial-gradient(circle at 50% 0%, #1e1b4b 0%, #020617 100%);
+  color: var(--st-text-1);
+}
+
+html.dark .settings-theme .settings-content {
+  background: transparent;
+}
+
+html.dark .settings-theme .bg-gray-50,
+html.dark .settings-theme .bg-slate-50,
+html.dark .settings-theme .bg-gray-100 {
+  background-color: transparent !important;
+}
+
+html.dark .settings-theme .bg-white {
+  background-color: var(--st-surface) !important;
+  backdrop-filter: var(--st-glass);
+}
+
+html.dark .settings-theme .bg-gray-800 {
+  background-color: var(--st-surface-2) !important;
+  backdrop-filter: var(--st-glass);
+}
+
+html.dark .settings-theme .border-gray-100,
+html.dark .settings-theme .border-gray-200,
+html.dark .settings-theme .border-slate-200,
+html.dark .settings-theme .border-gray-300 {
+  border-color: var(--st-border) !important;
+}
+
+html.dark .settings-theme .text-gray-900 {
+  color: var(--st-text-1) !important;
+}
+
+html.dark .settings-theme .text-gray-700 {
+  color: var(--st-text-2) !important;
+}
+
+html.dark .settings-theme .text-gray-600 {
+  color: var(--st-text-3) !important;
+}
+
+html.dark .settings-theme .text-gray-500 {
+  color: var(--st-text-4) !important;
+}
+
+html.dark .settings-theme .text-gray-400 {
+  color: var(--st-text-5) !important;
+}
+
+html.dark .settings-theme .hover\:bg-gray-50:hover,
+html.dark .settings-theme .hover\:bg-gray-100:hover {
+  background-color: var(--st-hover) !important;
+  backdrop-filter: var(--st-glass);
+}
+
+html.dark .settings-theme .rounded-xl {
+  border-radius: 1.25rem;
+}
+
+html.dark .settings-theme .rounded-2xl {
+  border-radius: 1.5rem;
+}
+
+html.dark .settings-theme .shadow-sm {
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2), 0 2px 4px -2px rgba(0, 0, 0, 0.2);
+}
+
+html.dark .settings-theme .shadow-xl {
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
+}
+
+html.dark .settings-theme input,
+html.dark .settings-theme select,
+html.dark .settings-theme textarea {
+  background-color: var(--st-input) !important;
+  border-color: var(--st-border) !important;
+  color: var(--st-text-1) !important;
+  backdrop-filter: var(--st-glass);
+}
+
+html.dark .settings-theme select option {
+  background-color: #ffffff !important;
+  color: #111827 !important;
+}
+
+html.dark .settings-theme input::placeholder,
+html.dark .settings-theme textarea::placeholder {
+  color: var(--st-text-5) !important;
+}
+
+html.dark .settings-theme kbd {
+  background-color: var(--st-input) !important;
+  border-color: var(--st-border) !important;
+  color: var(--st-text-3) !important;
+}
+
+html.dark .settings-theme .bg-blue-600 {
+  background-color: var(--st-primary) !important;
+  box-shadow: 0 10px 15px -3px rgba(99, 102, 241, 0.4);
+}
+
+html.dark .settings-theme .hover\:bg-blue-700:hover {
+  background-color: var(--st-primary-hover) !important;
+}
+
+html.dark .settings-theme .settings-card {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html.dark .settings-theme .settings-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.4);
+  border-color: rgba(99, 102, 241, 0.4) !important;
+}

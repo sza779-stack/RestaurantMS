@@ -1,0 +1,3 @@
+ALTER TABLE "combo_items"
+ADD COLUMN "componentType" TEXT NOT NULL DEFAULT 'MENU_ITEM',
+ADD COLUMN "selectionRules" JSONB NOT NULL DEFAULT '{}';

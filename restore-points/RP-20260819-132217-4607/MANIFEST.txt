@@ -1,0 +1,10 @@
+Restore Point ID: RP-20260819-132217-4607
+Created: 2026-08-19 13:22:17 EDT
+Purpose: Backup before implementing the mockup KDS/packing card UI
+
+Files:
+- web-kds/src/App.tsx        (KDS order card)
+- web-packing/src/App.tsx    (Packing order card)
+- web-admin/src/pages/settings/GeneralSettings.tsx (dropdown UI)
+
+To restore: copy files back over scaffold/<path>

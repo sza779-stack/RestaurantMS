@@ -1,0 +1,1756 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+generator erd {
+  provider = "prisma-erd-generator"
+  output   = "../../../documentation/FULL_ERD.svg"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// CORE ENTITY MODELS
+// ============================================
+
+model Company {
+  id        String   @id @default(uuid())
+  name      String
+  legalName String?
+  taxId     String?
+  address   String?
+  phone     String?
+  email     String?
+  logoUrl   String?
+  website   String?
+  timezone  String   @default("America/New_York")
+  currency  String   @default("USD")
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  stores         Store[]
+  users          User[]
+  ledgerAccounts LedgerAccount[]
+
+  @@map("companies")
+}
+
+model Store {
+  id        String  @id @default(uuid())
+  companyId String
+  name      String
+  code      String
+  address   String
+  city      String
+  state     String
+  zipCode   String
+  phone     String
+  email     String?
+  timezone  String  @default("America/New_York")
+  latitude  Float?
+  longitude Float?
+
+  settings       StoreSettings?
+  operatingHours Json           @default("{}")
+
+  taxRate Decimal @default(0.00) @db.Decimal(5, 4)
+  taxName String  @default("Sales Tax")
+
+  serviceFeeRate Decimal @default(0.00) @db.Decimal(5, 4)
+  deliveryFee    Decimal @default(0.00) @db.Decimal(10, 2)
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company        Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  users          UserStoreAccess[]
+  deliveryZones  DeliveryZone[]
+  products       ProductStore[]
+  categories     Category[]
+  addons         AddOn[]
+  addonSets      AddOnSet[]
+  combos         Combo[]
+  comboStores    ComboStore[]
+  printers       Printer[]
+  orders         Order[]
+  inventoryItems InventoryItem[]
+  journalEntries JournalEntry[]
+  employees      Employee[]
+  closePeriods   ClosePeriod[]
+  drivers        Driver[]
+  expenses       Expense[]
+
+  @@unique([companyId, code])
+  @@map("stores")
+}
+
+model StoreSettings {
+  id      String @id @default(uuid())
+  storeId String @unique
+
+  orderNumberPrefix String @default("ORD")
+  nextOrderNumber   Int    @default(1)
+  tokenNumberPrefix String @default("T")
+  nextTokenNumber   Int    @default(1)
+
+  pizzaPrepTimeMinutes    Int @default(15)
+  fryerPrepTimeMinutes    Int @default(8)
+  sandwichPrepTimeMinutes Int @default(5)
+
+  acceptCash          Boolean @default(true)
+  acceptCard          Boolean @default(true)
+  acceptOnlinePayment Boolean @default(true)
+
+  osdDisplayMode    String  @default("grid")
+  kdsAutoAdvance    Boolean @default(true)
+  kdsAlertThreshold Int     @default(20)
+
+  loyaltyEnabled         Boolean @default(false)
+  loyaltyPointsPerDollar Decimal @default(1.00) @db.Decimal(5, 2)
+
+  /// Stripe / PayPal / Square JSON blob from POS General Settings (gateway UI keys).
+  paymentConfigs Json?
+
+  /// GOOGLE = Maps JavaScript API + Geocoder + Directions; OPENSTREETMAP = Leaflet + OSM tiles + OSRM + Photon geocode (no Google API key).
+  mapsProvider String @default("GOOGLE")
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@map("store_settings")
+}
+
+model DeliveryZone {
+  id          String  @id @default(uuid())
+  storeId     String
+  name        String
+  description String?
+
+  zoneType      String @default("radius")
+  centerLat     Float?
+  centerLng     Float?
+  radiusKm      Float?
+  polygonCoords Json?
+
+  deliveryFee      Decimal @default(0.00) @db.Decimal(10, 2)
+  minOrderAmount   Decimal @default(0.00) @db.Decimal(10, 2)
+  estimatedMinutes Int     @default(30)
+
+  isActive Boolean @default(true)
+
+  store     Store             @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  addresses CustomerAddress[]
+
+  @@map("delivery_zones")
+}
+
+// ============================================
+// USER & RBAC MODELS
+// ============================================
+
+model User {
+  id        String  @id @default(uuid())
+  companyId String?
+
+  email        String  @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  phone        String?
+  avatarUrl    String?
+
+  isActive      Boolean   @default(true)
+  emailVerified Boolean   @default(false)
+  lastLoginAt   DateTime?
+
+  roleId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company       Company?          @relation(fields: [companyId], references: [id])
+  role          Role              @relation(fields: [roleId], references: [id])
+  storeAccess   UserStoreAccess[]
+  ordersCreated Order[]           @relation("CreatedBy")
+  auditLogs     AuditLog[]
+
+  @@map("users")
+}
+
+model Role {
+  id          String  @id @default(uuid())
+  name        String  @unique
+  description String?
+  isSystem    Boolean @default(false)
+
+  permissions RolePermission[]
+  users       User[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String  @id @default(uuid())
+  code        String  @unique
+  name        String
+  description String?
+  module      String
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  id           String @id @default(uuid())
+  roleId       String
+  permissionId String
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model UserStoreAccess {
+  id      String @id @default(uuid())
+  userId  String
+  storeId String
+
+  overrideRoleId String?
+
+  isDefault Boolean @default(false)
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, storeId])
+  @@map("user_store_access")
+}
+
+model AuditLog {
+  id      String  @id @default(uuid())
+  userId  String?
+  storeId String?
+
+  action     String
+  entityType String
+  entityId   String?
+
+  oldValues Json?
+  newValues Json?
+  metadata  Json?
+
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ============================================
+// MENU & PRODUCT MODELS
+// ============================================
+
+model Category {
+  id       String  @id @default(uuid())
+  storeId  String
+  parentId String?
+
+  name        String
+  description String?
+  sortOrder   Int     @default(0)
+  imageUrl    String?
+
+  color String?
+  icon  String?
+
+  availableFrom DateTime?
+  availableTo   DateTime?
+  availableDays Int[]
+
+  isActive Boolean @default(true)
+
+  store    Store      @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  parent   Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryHierarchy")
+  products Product[]
+  comboItems ComboItem[]
+
+  @@map("categories")
+}
+
+model Product {
+  id         String @id @default(uuid())
+  categoryId String
+
+  name        String
+  description String?
+  sku         String?
+  barcode     String?
+
+  type          ProductType @default(STANDALONE)
+  configuration Json        @default("{}")
+
+  basePrice Decimal  @default(0.00) @db.Decimal(10, 2)
+  costPrice Decimal? @db.Decimal(10, 2)
+
+  imageUrl    String?
+  galleryUrls String[]
+
+  isActive   Boolean @default(true)
+  isFeatured Boolean @default(false)
+
+  prepTimeMinutes Int            @default(10)
+  kitchenStation  KitchenStation @default(GENERAL)
+
+  recipe Recipe?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  category     Category       @relation(fields: [categoryId], references: [id])
+  storeConfigs ProductStore[]
+  sizes        ProductSize[]
+  comboItems   ComboItem[]
+  orderItems   OrderItem[]
+  addonSets    ProductAddOnSet[]
+
+  @@map("products")
+}
+
+model ProductStore {
+  id        String @id @default(uuid())
+  productId String
+  storeId   String
+
+  price       Decimal? @db.Decimal(10, 2)
+  isAvailable Boolean  @default(true)
+
+  availableFrom DateTime?
+  availableTo   DateTime?
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  store   Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, storeId])
+  @@map("product_stores")
+}
+
+model ProductSize {
+  id        String @id @default(uuid())
+  productId String
+
+  name      String
+  code      String
+  sortOrder Int    @default(0)
+
+  priceAdjustment Decimal @default(0.00) @db.Decimal(10, 2)
+
+  slices Int?
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_sizes")
+}
+
+model AddOn {
+  id      String @id @default(uuid())
+  storeId String
+
+  type            AddOnType       @default(TOPPING)
+  category        AddOnCategory   @default(REGULAR)
+  name            String
+  price           Decimal         @default(0.00) @db.Decimal(10, 2)
+  sizePrices      Json?           @default("{}")
+  measurementUnit MeasurementUnit @default(PIECES)
+  defaultQuantity Decimal         @default(1.00) @db.Decimal(10, 3)
+
+  applicableItemTypes ProductType[]
+
+  isDefault Boolean @default(false)
+  isActive  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store     Store      @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  addonSets SetAddOn[]
+
+  @@unique([storeId, name])
+  @@map("addons")
+}
+
+model AddOnSet {
+  id      String @id @default(uuid())
+  storeId String
+
+  name        String
+  description String?
+  pricingRule PricingRule @default(PER_ITEM_PRICE)
+
+  applicableItemTypes ProductType[]
+
+  minSelect Int  @default(0)
+  maxSelect Int?
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store  Store      @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  addons SetAddOn[]
+  products ProductAddOnSet[]
+
+  @@unique([storeId, name])
+  @@map("addon_sets")
+}
+
+model SetAddOn {
+  setId   String
+  addonId String
+
+  addon AddOn    @relation(fields: [addonId], references: [id], onDelete: Cascade)
+  set   AddOnSet @relation(fields: [setId], references: [id], onDelete: Cascade)
+
+  displayOrder  Int      @default(0)
+  priceOverride Decimal? @db.Decimal(10, 2)
+
+  @@id([setId, addonId])
+  @@map("set_addons")
+}
+
+model ProductAddOnSet {
+  productId    String
+  addonSetId   String
+  product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  addonSet     AddOnSet @relation(fields: [addonSetId], references: [id], onDelete: Cascade)
+  displayOrder Int      @default(0)
+
+  @@id([productId, addonSetId])
+  @@map("product_addon_sets")
+}
+
+model Combo {
+  id      String @id @default(uuid())
+  storeId String
+
+  name        String
+  description String?
+  sku         String?
+
+  basePrice   Decimal @default(0.00) @db.Decimal(10, 2)
+  retailValue Decimal @default(0.00) @db.Decimal(10, 2) // Value if purchased separately
+
+  imageUrl    String?
+  galleryUrls String[] // Premium image selection
+
+  isActive   Boolean @default(true)
+  isFeatured Boolean @default(false)
+  sortOrder  Int     @default(0)
+
+  prepTimeMinutes Int            @default(15)
+  kitchenStation  KitchenStation @default(GENERAL)
+
+  availableFrom DateTime?
+  availableTo   DateTime?
+  availableDays Int[]
+
+  items  ComboItem[]
+  stores ComboStore[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store      Store            @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  orderItems OrderItemCombo[]
+
+  @@map("combos")
+}
+
+model ComboStore {
+  id      String @id @default(uuid())
+  comboId String
+  storeId String
+
+  price       Decimal? @db.Decimal(10, 2)
+  isAvailable Boolean  @default(true)
+
+  availableFrom DateTime?
+  availableTo   DateTime?
+
+  combo Combo @relation(fields: [comboId], references: [id], onDelete: Cascade)
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([comboId, storeId])
+  @@map("combo_stores")
+}
+
+model ComboItem {
+  id      String @id @default(uuid())
+  comboId String
+
+  productId  String?
+  categoryId String?
+
+  name     String // Display name in combo (e.g., "Large Pizza", "Side Dish")
+  quantity Int    @default(1)
+
+  componentType  String @default("MENU_ITEM") // PIZZA, WINGS, SODA, MENU_ITEM, MENU_CATEGORY, CUSTOM
+  selectionRules Json   @default("{}") // Generic combo-builder rules for sizes, modifiers, toppings, flavors, drinks
+
+  // Size configuration
+  allowSizeSelection Boolean  @default(true)
+  defaultSizeId      String?
+  allowedSizeIds     String[] // Empty = all sizes allowed
+
+  // Customization configuration
+  allowCustomization  Boolean  @default(true)
+  maxIncludedToppings Int      @default(0)
+  freeModifierGroups  String[] // IDs of modifier groups that are always free
+
+  // Modifier configuration
+  allowModifiers      Boolean  @default(true)
+  includedModifierIds String[] // Modifiers included in combo price (legacy)
+
+  // Product selection options
+  isProductFixed    Boolean @default(true) // false = customer chooses from category
+  productGroupLabel String? // e.g., "Choose Your Pizza", "Choose a Side"
+
+  sortOrder Int @default(0)
+
+  combo    Combo     @relation(fields: [comboId], references: [id], onDelete: Cascade)
+  product  Product?  @relation(fields: [productId], references: [id])
+  category Category? @relation(fields: [categoryId], references: [id])
+
+  @@map("combo_items")
+}
+
+// Track combos within order items
+model OrderItemCombo {
+  id          String @id @default(uuid())
+  orderItemId String
+  comboId     String
+
+  comboName  String
+  comboPrice Decimal @db.Decimal(10, 2)
+
+  // Snapshot of combo items at time of order
+  items Json? // Array of { productId, productName, sizeId, sizeName, modifiers: [] }
+
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  combo     Combo     @relation(fields: [comboId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@map("order_item_combos")
+}
+
+model Recipe {
+  id        String @id @default(uuid())
+  productId String @unique
+
+  ingredients RecipeIngredient[]
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("recipes")
+}
+
+model RecipeIngredient {
+  id              String @id @default(uuid())
+  recipeId        String
+  inventoryItemId String
+
+  quantity Decimal @db.Decimal(10, 3)
+  unit     String
+
+  recipe        Recipe        @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id])
+
+  @@map("recipe_ingredients")
+}
+
+// ============================================
+// ORDER MODELS
+// ============================================
+
+model Order {
+  id      String @id @default(uuid())
+  storeId String
+
+  orderNumber String  @unique
+  tokenNumber String?
+
+  type   OrderType   @default(DINE_IN)
+  status OrderStatus @default(PENDING)
+
+  customerName  String?
+  customerPhone String?
+  customerEmail String?
+
+  deliveryAddress String?
+  deliveryZoneId  String?
+  driverId        String?
+
+  tableNumber String?
+  guestCount  Int?
+
+  createdAt    DateTime  @default(now())
+  scheduledFor DateTime?
+  confirmedAt  DateTime?
+  preparedAt   DateTime?
+  packedAt     DateTime?
+  deliveredAt  DateTime?
+  completedAt  DateTime?
+  cancelledAt  DateTime?
+
+  subtotal       Decimal @default(0.00) @db.Decimal(10, 2)
+  taxAmount      Decimal @default(0.00) @db.Decimal(10, 2)
+  taxExempt      Boolean @default(false)
+  taxExemptIdRef String?
+  discountAmount Decimal @default(0.00) @db.Decimal(10, 2)
+  deliveryFee    Decimal @default(0.00) @db.Decimal(10, 2)
+  tipAmount      Decimal @default(0.00) @db.Decimal(10, 2)
+  total          Decimal @default(0.00) @db.Decimal(10, 2)
+
+  couponCode        String?
+  loyaltyPointsUsed Int?
+
+  source      OrderSource @default(POS)
+  createdById String?
+
+  customerNotes String?
+  kitchenNotes  String?
+
+  store     Store       @relation(fields: [storeId], references: [id])
+  items     OrderItem[]
+  payments  Payment[]
+  refunds   Refund[]
+  driver    Driver?     @relation(fields: [driverId], references: [id])
+  createdBy User?       @relation("CreatedBy", fields: [createdById], references: [id])
+
+  loyaltyTransactions LoyaltyTransaction[]
+
+  @@index([storeId, status])
+  @@index([storeId, scheduledFor])
+  @@index([createdAt])
+  @@index([orderNumber])
+  @@map("orders")
+}
+
+model OrderItem {
+  id      String @id @default(uuid())
+  orderId String
+
+  productId   String
+  productName String
+
+  sizeId   String?
+  sizeName String?
+
+  quantity   Int     @default(1)
+  unitPrice  Decimal @db.Decimal(10, 2)
+  totalPrice Decimal @db.Decimal(10, 2)
+
+  // Structured customization data: Array of { addonId, addonName, optionName, price, quantity, type }
+  addons Json?
+
+  isHalfAndHalf      Boolean @default(false)
+  leftHalfProductId  String?
+  rightHalfProductId String?
+
+  itemType       ItemType       @default(PRODUCT)
+  kitchenStation KitchenStation @default(GENERAL)
+  status         ItemStatus     @default(PENDING)
+  startedAt      DateTime?
+  completedAt    DateTime?
+
+  notes String?
+
+  order        Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product      Product          @relation(fields: [productId], references: [id])
+  comboDetails OrderItemCombo[]
+
+  @@map("order_items")
+}
+
+model Payment {
+  id      String @id @default(uuid())
+  orderId String
+
+  amount Decimal       @db.Decimal(10, 2)
+  method PaymentMethod @default(CASH)
+  status PaymentStatus @default(PENDING)
+
+  transactionId String?
+  cardLast4     String?
+
+  isPartial Boolean @default(false)
+
+  processedAt   DateTime @default(now())
+  processedById String?
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("payments")
+}
+
+model Refund {
+  id      String @id @default(uuid())
+  orderId String
+
+  amount Decimal @db.Decimal(10, 2)
+  reason String
+
+  itemsRefunded Json?
+
+  processedAt   DateTime @default(now())
+  processedById String?
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("refunds")
+}
+
+// ============================================
+// KITCHEN & DELIVERY MODELS
+// ============================================
+
+model Driver {
+  id      String  @id @default(uuid())
+  storeId String
+  userId  String?
+
+  name         String
+  phone        String
+  email        String?
+  vehicleType  String?
+  licensePlate String?
+  pin          String? // Hashed PIN for mobile app login
+
+  status          DriverStatus @default(OFFLINE)
+  currentLocation Json?
+
+  isContractor    Boolean @default(true)
+  perDeliveryRate Decimal @default(0.00) @db.Decimal(10, 2)
+
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  lastLoginAt DateTime?
+
+  store      Store           @relation(fields: [storeId], references: [id])
+  orders     Order[]
+  deliveries Delivery[]
+  earnings   DriverEarning[]
+
+  @@map("drivers")
+}
+
+model Delivery {
+  id       String @id @default(uuid())
+  orderId  String @unique
+  driverId String
+
+  status DeliveryStatus @default(ASSIGNED)
+
+  assignedAt  DateTime  @default(now())
+  pickedUpAt  DateTime?
+  deliveredAt DateTime?
+
+  trackingEvents Json[]
+
+  proofPhotoUrl String?
+  signatureUrl  String?
+  customerNotes String?
+
+  cashCollected Decimal? @db.Decimal(10, 2)
+
+  driver Driver @relation(fields: [driverId], references: [id])
+
+  @@map("deliveries")
+}
+
+model DriverEarning {
+  id       String @id @default(uuid())
+  driverId String
+  orderId  String
+
+  deliveryFee  Decimal @default(0.00) @db.Decimal(10, 2)
+  tipAmount    Decimal @default(0.00) @db.Decimal(10, 2)
+  bonusAmount  Decimal @default(0.00) @db.Decimal(10, 2)
+  totalEarning Decimal @default(0.00) @db.Decimal(10, 2)
+
+  earnedAt DateTime @default(now())
+
+  driver Driver @relation(fields: [driverId], references: [id])
+
+  @@map("driver_earnings")
+}
+
+// ============================================
+// INVENTORY MODELS
+// ============================================
+
+model InventoryItem {
+  id      String @id @default(uuid())
+  storeId String
+
+  name        String
+  description String?
+  sku         String?
+  barcode     String?
+
+  unit String
+
+  trackInventory Boolean  @default(true)
+  currentStock   Decimal  @default(0.00) @db.Decimal(10, 3)
+  minStockLevel  Decimal  @default(0.00) @db.Decimal(10, 3)
+  maxStockLevel  Decimal? @db.Decimal(10, 3)
+
+  avgCost  Decimal? @db.Decimal(10, 4)
+  lastCost Decimal? @db.Decimal(10, 4)
+
+  category String?
+
+  preferredVendorId String?
+
+  isActive Boolean @default(true)
+
+  store             Store              @relation(fields: [storeId], references: [id])
+  stockMovements    StockMovement[]
+  recipeIngredients RecipeIngredient[]
+  vendorItems       VendorItem[]
+
+  @@map("inventory_items")
+}
+
+model StockMovement {
+  id              String @id @default(uuid())
+  inventoryItemId String
+
+  type     MovementType
+  quantity Decimal      @db.Decimal(10, 3)
+
+  referenceType String?
+  referenceId   String?
+
+  unitCost  Decimal? @db.Decimal(10, 4)
+  totalCost Decimal? @db.Decimal(10, 2)
+
+  notes String?
+
+  createdAt   DateTime @default(now())
+  createdById String?
+
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id])
+
+  @@map("stock_movements")
+}
+
+model Vendor {
+  id        String @id @default(uuid())
+  companyId String
+
+  name        String
+  contactName String?
+  phone       String?
+  email       String?
+  address     String?
+
+  isActive Boolean @default(true)
+
+  items          VendorItem[]
+  purchaseOrders PurchaseOrder[]
+
+  @@map("vendors")
+}
+
+model VendorItem {
+  id              String @id @default(uuid())
+  vendorId        String
+  inventoryItemId String
+
+  vendorSku    String?
+  unitPrice    Decimal @db.Decimal(10, 4)
+  minOrderQty  Decimal @default(1.00) @db.Decimal(10, 3)
+  leadTimeDays Int?
+
+  isPreferred Boolean @default(false)
+
+  vendor        Vendor        @relation(fields: [vendorId], references: [id])
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id])
+
+  @@unique([vendorId, inventoryItemId])
+  @@map("vendor_items")
+}
+
+model PurchaseOrder {
+  id       String @id @default(uuid())
+  vendorId String
+  storeId  String
+
+  poNumber String   @unique
+  status   PoStatus @default(DRAFT)
+
+  orderDate    DateTime  @default(now())
+  expectedDate DateTime?
+  receivedDate DateTime?
+
+  subtotal  Decimal @default(0.00) @db.Decimal(10, 2)
+  taxAmount Decimal @default(0.00) @db.Decimal(10, 2)
+  total     Decimal @default(0.00) @db.Decimal(10, 2)
+
+  items  PurchaseOrderItem[]
+  vendor Vendor              @relation(fields: [vendorId], references: [id])
+
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderItem {
+  id              String @id @default(uuid())
+  purchaseOrderId String
+  inventoryItemId String
+
+  quantity   Decimal @db.Decimal(10, 3)
+  unitPrice  Decimal @db.Decimal(10, 4)
+  totalPrice Decimal @db.Decimal(10, 2)
+
+  receivedQty Decimal @default(0.00) @db.Decimal(10, 3)
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+
+  @@map("purchase_order_items")
+}
+
+// ============================================
+// FINANCE & ACCOUNTING MODELS
+// ============================================
+
+model LedgerAccount {
+  id        String @id @default(uuid())
+  companyId String
+
+  code    String
+  name    String
+  type    AccountType
+  subtype String?
+
+  isBankAccount Boolean @default(false)
+  bankName      String?
+  accountNumber String?
+
+  parentId String?
+
+  isActive Boolean @default(true)
+
+  company      Company         @relation(fields: [companyId], references: [id])
+  parent       LedgerAccount?  @relation("AccountHierarchy", fields: [parentId], references: [id])
+  children     LedgerAccount[] @relation("AccountHierarchy")
+  journalLines JournalLine[]
+
+  @@unique([companyId, code])
+  @@map("ledger_accounts")
+}
+
+model JournalEntry {
+  id      String  @id @default(uuid())
+  storeId String?
+
+  entryNumber String   @unique
+  date        DateTime @default(now())
+
+  referenceType String?
+  referenceId   String?
+
+  description String
+
+  lines JournalLine[]
+
+  isPosted Boolean   @default(false)
+  postedAt DateTime?
+
+  createdAt   DateTime @default(now())
+  createdById String?
+
+  store Store? @relation(fields: [storeId], references: [id])
+
+  @@map("journal_entries")
+}
+
+model JournalLine {
+  id              String @id @default(uuid())
+  journalEntryId  String
+  ledgerAccountId String
+
+  description String?
+
+  debit  Decimal @default(0.00) @db.Decimal(12, 2)
+  credit Decimal @default(0.00) @db.Decimal(12, 2)
+
+  journalEntry  JournalEntry  @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  ledgerAccount LedgerAccount @relation(fields: [ledgerAccountId], references: [id])
+
+  @@map("journal_lines")
+}
+
+model Expense {
+  id      String @id @default(uuid())
+  storeId String
+
+  date        DateTime        @default(now())
+  category    ExpenseCategory
+  description String
+  amount      Decimal         @db.Decimal(10, 2)
+
+  paymentMethod     PaymentMethod
+  paidFromAccountId String?
+
+  receiptUrl String?
+
+  vendorId   String?
+  vendorName String?
+
+  isRecurring Boolean @default(false)
+
+  createdAt   DateTime @default(now())
+  createdById String?
+
+  store Store @relation(fields: [storeId], references: [id])
+
+  @@map("expenses")
+}
+
+// ============================================
+// EMPLOYEE & PAYROLL MODELS
+// ============================================
+
+model Employee {
+  id      String  @id @default(uuid())
+  storeId String
+  userId  String?
+
+  firstName       String
+  lastName        String
+  email           String?
+  phone           String?
+  address         String?
+  ssnLast4        String?
+  dateOfBirth     DateTime?
+  hireDate        DateTime  @default(now())
+  terminationDate DateTime?
+
+  type   EmployeeType   @default(HOURLY)
+  status EmployeeStatus @default(ACTIVE)
+
+  hourlyRate Decimal? @db.Decimal(10, 2)
+  salary     Decimal? @db.Decimal(10, 2)
+
+  jobTitle   String
+  department String?
+
+  w2Profile W2Profile?
+
+  store       Store                @relation(fields: [storeId], references: [id])
+  timeEntries TimeEntry[]
+  payrollRuns PayrollRunEmployee[]
+
+  @@map("employees")
+}
+
+model W2Profile {
+  id         String @id @default(uuid())
+  employeeId String @unique
+
+  employerEin     String
+  employerName    String
+  employerAddress String
+
+  ssn     String
+  address String
+
+  federalAllowances Int     @default(0)
+  stateAllowances   Int     @default(0)
+  additionalFederal Decimal @default(0.00) @db.Decimal(10, 2)
+  additionalState   Decimal @default(0.00) @db.Decimal(10, 2)
+
+  state        String
+  localTaxCode String?
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@map("w2_profiles")
+}
+
+model TimeEntry {
+  id         String @id @default(uuid())
+  employeeId String
+
+  date     DateTime
+  clockIn  DateTime
+  clockOut DateTime?
+
+  breakMinutes Int @default(0)
+
+  regularHours  Decimal? @db.Decimal(5, 2)
+  overtimeHours Decimal? @db.Decimal(5, 2)
+
+  notes String?
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@map("time_entries")
+}
+
+model PayrollRun {
+  id      String @id @default(uuid())
+  storeId String
+
+  periodStart DateTime
+  periodEnd   DateTime
+  payDate     DateTime
+
+  status PayrollStatus @default(DRAFT)
+
+  totalGross Decimal @default(0.00) @db.Decimal(12, 2)
+  totalTaxes Decimal @default(0.00) @db.Decimal(12, 2)
+  totalNet   Decimal @default(0.00) @db.Decimal(12, 2)
+
+  employees PayrollRunEmployee[]
+
+  createdAt     DateTime  @default(now())
+  processedAt   DateTime?
+  processedById String?
+
+  @@map("payroll_runs")
+}
+
+model PayrollRunEmployee {
+  id           String @id @default(uuid())
+  payrollRunId String
+  employeeId   String
+
+  regularHours  Decimal @db.Decimal(5, 2)
+  overtimeHours Decimal @db.Decimal(5, 2)
+
+  regularPay  Decimal @db.Decimal(10, 2)
+  overtimePay Decimal @db.Decimal(10, 2)
+  tips        Decimal @default(0.00) @db.Decimal(10, 2)
+  bonus       Decimal @default(0.00) @db.Decimal(10, 2)
+  grossPay    Decimal @db.Decimal(10, 2)
+
+  federalTax      Decimal @default(0.00) @db.Decimal(10, 2)
+  stateTax        Decimal @default(0.00) @db.Decimal(10, 2)
+  localTax        Decimal @default(0.00) @db.Decimal(10, 2)
+  socialSecurity  Decimal @default(0.00) @db.Decimal(10, 2)
+  medicare        Decimal @default(0.00) @db.Decimal(10, 2)
+  otherDeductions Decimal @default(0.00) @db.Decimal(10, 2)
+
+  netPay Decimal @db.Decimal(10, 2)
+
+  payrollRun PayrollRun @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  employee   Employee   @relation(fields: [employeeId], references: [id])
+
+  @@unique([payrollRunId, employeeId])
+  @@map("payroll_run_employees")
+}
+
+// ============================================
+// PRINTER CONFIGURATION
+// ============================================
+
+model Printer {
+  id      String @id @default(uuid())
+  storeId String
+
+  name String
+  type PrinterType @default(THERMAL)
+
+  connectionType String  @default("NETWORK")
+  ipAddress      String?
+  port           Int     @default(9100)
+
+  paperWidth Int @default(80)
+
+  printOnOrder   Boolean @default(false)
+  printOnPaid    Boolean @default(true)
+  printOnKitchen Boolean @default(false)
+  printOnPacked  Boolean @default(false)
+
+  station KitchenStation @default(GENERAL)
+
+  isActive Boolean @default(true)
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@map("printers")
+}
+
+// ============================================
+// END OF DAY / CLOSE PERIOD
+// ============================================
+
+model ClosePeriod {
+  id      String @id @default(uuid())
+  storeId String
+
+  periodDate DateTime
+  openedAt   DateTime
+  closedAt   DateTime?
+
+  openingCash Decimal @db.Decimal(10, 2)
+
+  closingCash    Decimal?
+  expectedCash   Decimal?
+  cashDifference Decimal?
+
+  totalSales  Decimal @default(0.00) @db.Decimal(10, 2)
+  totalOrders Int     @default(0)
+
+  cashSales  Decimal @default(0.00) @db.Decimal(10, 2)
+  cardSales  Decimal @default(0.00) @db.Decimal(10, 2)
+  otherSales Decimal @default(0.00) @db.Decimal(10, 2)
+
+  status CloseStatus @default(OPEN)
+
+  openedById String
+  closedById String?
+
+  store Store @relation(fields: [storeId], references: [id])
+
+  @@unique([storeId, periodDate])
+  @@map("close_periods")
+}
+
+// ============================================
+// CUSTOMER & LOYALTY
+// ============================================
+
+model Customer {
+  id String @id @default(uuid())
+
+  phone     String  @unique
+  email     String?
+  firstName String?
+  lastName  String?
+
+  loyaltyPoints Int     @default(0)
+  lifetimeSpend Decimal @default(0.00) @db.Decimal(10, 2)
+  orderCount    Int     @default(0)
+
+  referralCode String?    @unique
+  referredById String?
+  referredBy   Customer?  @relation("Referrals", fields: [referredById], references: [id])
+  referrals    Customer[] @relation("Referrals")
+
+  createdAt DateTime @default(now())
+
+  addresses           CustomerAddress[]
+  loyaltyTransactions LoyaltyTransaction[]
+
+  @@index([phone])
+  @@map("customers")
+}
+
+model CustomerAddress {
+  id         String @id @default(uuid())
+  customerId String
+
+  label   String
+  address String
+  city    String
+  state   String
+  zipCode String
+
+  latitude  Float?
+  longitude Float?
+
+  deliveryZoneId String?
+
+  isDefault Boolean @default(false)
+
+  customer     Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  deliveryZone DeliveryZone? @relation(fields: [deliveryZoneId], references: [id])
+
+  @@map("customer_addresses")
+}
+
+model LoyaltyTransaction {
+  id         String @id @default(uuid())
+  customerId String
+
+  points Int
+  type   LoyaltyTransactionType
+
+  orderId     String?
+  description String?
+
+  createdAt DateTime @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  order    Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([orderId])
+  @@map("loyalty_transactions")
+}
+
+// ============================================
+// ENUMS
+// ============================================
+
+enum ProductType {
+  STANDALONE
+  COMBO
+  MODIFIER_ONLY
+  PIZZA
+  STROMBOLI
+  SUB
+  WRAP
+  CUSTOM
+}
+
+enum AddOnType {
+  TOPPING
+  SAUCE
+  CHEESE
+  PREMIUM_TOPPING
+  SIDE_OPTION
+  CRUST
+  BREAD
+}
+
+enum AddOnCategory {
+  REGULAR
+  PREMIUM
+  DIETARY
+}
+
+enum MeasurementUnit {
+  GRAMS
+  OUNCES
+  SLICES
+  PIECES
+  NONE
+}
+
+enum PricingRule {
+  FLAT_FEE
+  PER_ITEM_PRICE
+  FIRST_TWO_FREE
+  TIER_BASED
+}
+
+enum KitchenStation {
+  GENERAL
+  PIZZA
+  FRYER
+  SANDWICH
+  DRINKS
+  DESSERT
+  SALAD
+  GRILL
+}
+
+enum OrderType {
+  DINE_IN
+  PICKUP
+  DELIVERY
+  DRIVE_THRU
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PREPARING
+  BAKING
+  PACKING
+  READY
+  OUT_FOR_DELIVERY
+  DELIVERED
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+enum ItemStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum ItemType {
+  PRODUCT
+  COMBO
+}
+
+enum PaymentMethod {
+  CASH
+  CREDIT_CARD
+  DEBIT_CARD
+  GIFT_CARD
+  ONLINE
+  CHECK
+  OTHER
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum LoyaltyTransactionType {
+  EARNED
+  REDEEMED
+  SIGNUP
+  REFERRED
+  ADJUSTED
+}
+
+enum OrderSource {
+  POS
+  KIOSK
+  WEB
+  MOBILE_APP
+  PHONE
+  THIRD_PARTY
+}
+
+enum DriverStatus {
+  OFFLINE
+  ONLINE
+  BUSY
+  ON_BREAK
+}
+
+enum DeliveryStatus {
+  ASSIGNED
+  ACCEPTED
+  AT_STORE
+  PICKED_UP
+  EN_ROUTE
+  ARRIVED
+  DELIVERED
+  FAILED
+}
+
+enum MovementType {
+  SALE
+  PURCHASE
+  ADJUSTMENT
+  WASTE
+  TRANSFER_IN
+  TRANSFER_OUT
+  INITIAL
+}
+
+enum PoStatus {
+  DRAFT
+  SENT
+  PARTIAL
+  RECEIVED
+  CANCELLED
+}
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+}
+
+enum ExpenseCategory {
+  RENT
+  UTILITIES
+  SUPPLIES
+  MARKETING
+  REPAIRS
+  SOFTWARE
+  INSURANCE
+  LICENSES
+  OTHER
+}
+
+enum EmployeeType {
+  HOURLY
+  SALARY
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  INACTIVE
+  TERMINATED
+  ON_LEAVE
+}
+
+enum PayrollStatus {
+  DRAFT
+  PENDING
+  PROCESSED
+  PAID
+}
+
+enum PrinterType {
+  THERMAL
+  IMPACT
+  LABEL
+}
+
+enum PrinterConnection {
+  NETWORK
+  USB
+  SERIAL
+}
+
+enum CloseStatus {
+  OPEN
+  CLOSING
+  CLOSED
+  VERIFIED
+}
+
+// ============================================
+// NEW: STAFF SUGGESTIONS
+// ============================================
+
+model StaffSuggestion {
+  id         String  @id @default(uuid())
+  storeId    String
+  employeeId String?
+
+  title       String
+  description String
+  category    SuggestionCategory @default(GENERAL)
+
+  status SuggestionStatus @default(PENDING)
+
+  priority SuggestionPriority @default(MEDIUM)
+
+  adminResponse String?
+  reviewedById  String?
+  reviewedAt    DateTime?
+
+  upvotes Int @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@map("staff_suggestions")
+}
+
+// ============================================
+// NEW: SCHEDULING & SHIFTS
+// ============================================
+
+model WorkSchedule {
+  id      String @id @default(uuid())
+  storeId String
+
+  name      String
+  weekStart DateTime
+  weekEnd   DateTime
+
+  status ScheduleStatus @default(DRAFT)
+
+  shifts Shift[]
+
+  createdAt     DateTime  @default(now())
+  publishedAt   DateTime?
+  publishedById String?
+
+  @@map("work_schedules")
+}
+
+model Shift {
+  id         String @id @default(uuid())
+  scheduleId String
+  employeeId String
+
+  date      DateTime
+  startTime DateTime
+  endTime   DateTime
+
+  position String?
+  station  KitchenStation?
+
+  status ShiftStatus @default(SCHEDULED)
+
+  notes String?
+
+  schedule WorkSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@map("shifts")
+}
+
+model ShiftTemplate {
+  id      String @id @default(uuid())
+  storeId String
+
+  name      String
+  dayOfWeek Int // 0-6 (Sunday-Saturday)
+
+  startTime String // "HH:mm" format
+  endTime   String // "HH:mm" format
+
+  position String?
+  station  KitchenStation?
+
+  isActive Boolean @default(true)
+
+  @@map("shift_templates")
+}
+
+// ============================================
+// NEW: WAGE HISTORY
+// ============================================
+
+model WageHistory {
+  id         String @id @default(uuid())
+  employeeId String
+
+  effectiveDate DateTime
+  endDate       DateTime?
+
+  hourlyRate Decimal? @db.Decimal(10, 2)
+  salary     Decimal? @db.Decimal(10, 2)
+
+  reason       String?
+  approvedById String?
+
+  createdAt DateTime @default(now())
+
+  @@map("wage_histories")
+}
+
+// ============================================
+// NEW: ATTENDANCE RECORDS
+// ============================================
+
+model AttendanceRecord {
+  id         String @id @default(uuid())
+  storeId    String
+  employeeId String
+
+  date   DateTime
+  status AttendanceStatus
+
+  clockIn  DateTime?
+  clockOut DateTime?
+
+  scheduledStart DateTime?
+  scheduledEnd   DateTime?
+
+  breakDuration Int? // minutes
+
+  overtimeHours Decimal? @db.Decimal(5, 2)
+
+  notes        String?
+  approvedById String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([employeeId, date])
+  @@map("attendance_records")
+}
+
+// ============================================
+// NEW: ANALYTICS SNAPSHOTS
+// ============================================
+
+model DailySalesSnapshot {
+  id      String @id @default(uuid())
+  storeId String
+
+  date DateTime
+
+  totalSales        Decimal @db.Decimal(12, 2)
+  totalOrders       Int
+  averageOrderValue Decimal @db.Decimal(10, 2)
+
+  dineInSales   Decimal @db.Decimal(12, 2)
+  pickupSales   Decimal @db.Decimal(12, 2)
+  deliverySales Decimal @db.Decimal(12, 2)
+
+  cashSales  Decimal @db.Decimal(12, 2)
+  cardSales  Decimal @db.Decimal(12, 2)
+  otherSales Decimal @db.Decimal(12, 2)
+
+  taxAmount      Decimal @db.Decimal(12, 2)
+  discountAmount Decimal @db.Decimal(12, 2)
+  refundAmount   Decimal @db.Decimal(12, 2)
+
+  topProducts Json // Array of {productId, name, quantity, revenue}
+
+  hourBreakdown Json // Sales by hour
+
+  @@unique([storeId, date])
+  @@map("daily_sales_snapshots")
+}
+
+// ============================================
+// NEW ENUMS
+// ============================================
+
+enum SuggestionCategory {
+  GENERAL
+  MENU
+  OPERATIONS
+  CUSTOMER_SERVICE
+  CLEANLINESS
+  SAFETY
+  EFFICIENCY
+  MORALE
+}
+
+enum SuggestionStatus {
+  PENDING
+  UNDER_REVIEW
+  ACCEPTED
+  IMPLEMENTED
+  REJECTED
+}
+
+enum SuggestionPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum ScheduleStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum ShiftStatus {
+  SCHEDULED
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  NO_SHOW
+  CANCELLED
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  EARLY_DEPARTURE
+  ON_BREAK
+  SICK_LEAVE
+  VACATION
+  HOLIDAY
+}

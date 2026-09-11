@@ -1,0 +1,248 @@
+name: CI
+
+# CI gates every PR before merge:
+#   - Each web workspace's TypeScript must compile cleanly (the audit caught real
+#     errors in web-admin that had been broken because no one ran the typechecker).
+#   - API must build (nest build => tsc) and its unit + e2e lifecycle tests pass
+#     against a real Postgres + Redis spun up as service containers.
+#   - web-admin unit tests must pass.
+#
+# Jobs are matrixed by workspace so a failure in one app doesn't mask failures in
+# another, and so green/red status is per-workspace in the PR view.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # -------------------------------------------------------------------
+  # Web workspace typechecks (one job per app via matrix).
+  # Each workspace owns its own package-lock.json so npm ci is scoped per-app.
+  # -------------------------------------------------------------------
+  web-typecheck:
+    name: Typecheck (${{ matrix.workspace }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace:
+          - web-admin
+          - web-kds
+          - web-packing
+          - web-osdu
+          - web-online
+          - web-kiosk
+          - web-driver
+    defaults:
+      run:
+        working-directory: scaffold/${{ matrix.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: scaffold/${{ matrix.workspace }}/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      # `tsc --noEmit` is the gate. Build would also typecheck but pulls in Vite,
+      # which is unnecessary work for a CI gate that only cares about type errors.
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+  # -------------------------------------------------------------------
+  # web-admin is the only web workspace that ships unit tests today.
+  # Kept as a separate job so the typecheck matrix stays uniform.
+  # -------------------------------------------------------------------
+  web-admin-test:
+    name: Unit tests (web-admin)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: scaffold/web-admin
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: scaffold/web-admin/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Unit tests
+        run: npm test -- --run
+
+  # -------------------------------------------------------------------
+  # API build + unit tests. No service containers needed: unit specs mock
+  # Prisma and Redis. The e2e lifecycle gets its own job below because it
+  # needs a real database.
+  # -------------------------------------------------------------------
+  api-build-test:
+    name: Build + unit tests (api)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: scaffold/api
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: scaffold/api/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      # Prisma client is generated into node_modules; nest build will fail without it.
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Build (nest build => tsc)
+        run: npm run build
+
+      - name: Unit tests
+        run: npm test -- --passWithNoTests
+
+  # -------------------------------------------------------------------
+  # End-to-end order lifecycle harness. Spins up real Postgres + Redis as
+  # GitHub Actions service containers, runs migrations and seed, boots the
+  # compiled API, then drives the harness against http://localhost:3000.
+  # -------------------------------------------------------------------
+  api-e2e-lifecycle:
+    name: E2E lifecycle (api)
+    runs-on: ubuntu-latest
+    needs: [api-build-test]
+    defaults:
+      run:
+        working-directory: scaffold/api
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: restaurant
+          POSTGRES_PASSWORD: restaurant123
+          POSTGRES_DB: restaurant_platform
+        ports:
+          - 5432:5432
+        # pg_isready is the canonical readiness signal; without this the API can
+        # try to connect before Postgres has finished initialising.
+        options: >-
+          --health-cmd "pg_isready -U restaurant -d restaurant_platform"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://restaurant:restaurant123@localhost:5432/restaurant_platform
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: ci-secret-not-for-prod
+      JWT_EXPIRES_IN: 24h
+      PORT: '3000'
+      NODE_ENV: test
+      # The lifecycle harness reads API_URL/STORE_ID; defaults match local dev.
+      API_URL: http://localhost:3000
+      STORE_ID: default-store
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: scaffold/api/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      # `migrate deploy` (not `migrate dev`) is the right command for CI: it
+      # applies committed migrations without prompting and never tries to author
+      # a new one.
+      - name: Apply migrations
+        run: npx prisma migrate deploy
+
+      - name: Seed database
+        run: npm run prisma:seed
+
+      - name: Build API
+        run: npm run build
+
+      # Start the compiled API in the background, then poll /health until it
+      # answers 200 or we time out. The PID is captured so the run-cleanup step
+      # can stop it even if the harness fails.
+      - name: Start API
+        run: |
+          npm run start:prod &
+          echo $! > /tmp/api.pid
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:3000/health > /dev/null 2>&1; then
+              echo "API ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "API failed to start within 60s"
+          exit 1
+
+      - name: Run lifecycle harness
+        run: npm run test:e2e:lifecycle
+
+      # Always tear down the API so the runner's logs aren't polluted and so a
+      # rerun starts from a clean slate.
+      - name: Stop API
+        if: always()
+        run: |
+          if [ -f /tmp/api.pid ]; then
+            kill "$(cat /tmp/api.pid)" 2>/dev/null || true
+          fi
+
+  # -------------------------------------------------------------------
+  # Single status check the branch protection rule can require. Lets us add
+  # or remove matrix entries without touching the protected-branch config.
+  # -------------------------------------------------------------------
+  ci-pass:
+    name: CI pass
+    runs-on: ubuntu-latest
+    needs: [web-typecheck, web-admin-test, api-build-test, api-e2e-lifecycle]
+    if: always()
+    steps:
+      - name: Verify all required jobs succeeded
+        run: |
+          if [ "${{ needs.web-typecheck.result }}" != "success" ] \
+            || [ "${{ needs.web-admin-test.result }}" != "success" ] \
+            || [ "${{ needs.api-build-test.result }}" != "success" ] \
+            || [ "${{ needs.api-e2e-lifecycle.result }}" != "success" ]; then
+            echo "One or more required jobs failed."
+            exit 1
+          fi
+          echo "All required jobs passed."

@@ -1,0 +1,3 @@
+ALTER TABLE "orders"
+ADD COLUMN "taxExempt" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN "taxExemptIdRef" TEXT;

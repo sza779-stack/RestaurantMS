@@ -1,0 +1,219 @@
+services:
+  # Infrastructure
+  postgres:
+    image: postgres:15-alpine
+    container_name: restaurant-postgres
+    environment:
+      POSTGRES_USER: restaurant
+      POSTGRES_PASSWORD: restaurant123
+      POSTGRES_DB: restaurant_platform
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U restaurant -d restaurant_platform"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - restaurant-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: restaurant-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - restaurant-network
+
+  minio:
+    image: minio/minio:latest
+    container_name: restaurant-minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - restaurant-network
+
+  # API Backend
+  api:
+    build:
+      context: ../api
+      dockerfile: Dockerfile
+      target: development
+    container_name: restaurant-api
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://restaurant:restaurant123@postgres:5432/restaurant_platform
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: your-super-secret-jwt-key-change-in-production
+      JWT_EXPIRES_IN: 24h
+      PORT: 3000
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin123
+      MINIO_BUCKET: restaurant-assets
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    command: sh -c "npm run build && npm run start:prod"
+    networks:
+      - restaurant-network
+
+  # Admin/POS (Port 3001)
+  web-admin:
+    build:
+      context: ../web-admin
+      dockerfile: Dockerfile
+      target: development
+    container_name: restaurant-web-admin
+    environment:
+      VITE_API_URL: http://localhost:3000
+      VITE_WS_URL: ws://localhost:3000
+    ports:
+      - "3001:3001"
+    volumes:
+      - ../web-admin:/app
+      - /app/node_modules
+    depends_on:
+      - api
+    command: npm run dev -- --host
+    networks:
+      - restaurant-network
+
+  # Online Customer App (Port 3002)
+  web-online:
+    build:
+      context: ../web-online
+      dockerfile: Dockerfile
+      target: development
+    container_name: restaurant-web-online
+    environment:
+      VITE_API_URL: http://localhost:3000
+      VITE_WS_URL: ws://localhost:3000
+    ports:
+      - "3002:3002"
+    volumes:
+      - ../web-online:/app
+      - /app/node_modules
+    depends_on:
+      - api
+    command: npm run dev -- --host
+    networks:
+      - restaurant-network
+
+  # Kitchen Display System (Port 3003)
+  web-kds:
+    build:
+      context: ../web-kds
+      dockerfile: Dockerfile
+      target: development
+    container_name: restaurant-web-kds
+    environment:
+      VITE_API_URL: http://localhost:3000
+      VITE_WS_URL: ws://localhost:3000
+    ports:
+      - "3003:3003"
+    volumes:
+      - ../web-kds:/app
+      - /app/node_modules
+    depends_on:
+      - api
+    command: npm run dev -- --host
+    networks:
+      - restaurant-network
+
+  # Packing Station (Port 3004)
+  web-packing:
+    build:
+      context: ../web-packing
+      dockerfile: Dockerfile
+      target: development
+    container_name: restaurant-web-packing
+    environment:
+      VITE_API_URL: http://localhost:3000
+      VITE_WS_URL: ws://localhost:3000
+    ports:
+      - "3004:3004"
+    volumes:
+      - ../web-packing:/app
+      - /app/node_modules
+    depends_on:
+      - api
+    command: npm run dev -- --host
+    networks:
+      - restaurant-network
+
+  # Order Status Display Unit (Port 3005)
+  web-osdu:
+    build:
+      context: ../web-osdu
+      dockerfile: Dockerfile
+      target: development
+    container_name: restaurant-web-osdu
+    environment:
+      VITE_API_URL: http://localhost:3000
+      VITE_WS_URL: ws://localhost:3000
+    ports:
+      - "3005:3005"
+    volumes:
+      - ../web-osdu:/app
+      - /app/node_modules
+    depends_on:
+      - api
+    command: npm run dev -- --host
+    networks:
+      - restaurant-network
+
+  # Driver App (Port 3006)
+  web-driver:
+    build:
+      context: ../web-driver
+      dockerfile: Dockerfile
+      target: development
+    container_name: restaurant-web-driver
+    environment:
+      VITE_API_URL: http://localhost:3000
+      VITE_WS_URL: ws://localhost:3000
+    ports:
+      - "3006:3006"
+    volumes:
+      - ../web-driver:/app
+      - /app/node_modules
+    depends_on:
+      - api
+    command: npm run dev -- --host
+    networks:
+      - restaurant-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  api_dist:
+
+networks:
+  restaurant-network:
+    driver: bridge
